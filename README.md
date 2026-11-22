@@ -1,11 +1,18 @@
-# Estante: leitor de livros (EPUB e PDF)
+# fastbook: leitor de livros (EPUB e PDF)
 
 Aplicação web para ler livros EPUB e PDF. O progresso, os marcadores, os destaques e as preferências ficam salvos no servidor, então você começa a ler no computador e continua no celular de onde parou.
 
 ## Funcionalidades
 
 - **Biblioteca** com capas (extraídas do EPUB, ou da 1ª página no PDF), barra de progresso e "Continuar lendo"
-- **Leitor EPUB** paginado (duas colunas em telas largas), com sumário
+- **Prateleiras** Lendo / Quero ler / Lidos, busca por título ou autor e ordenação; o livro vai para "Lidos" ao chegar na última página
+- **Editar livro**: título, autor, capa e prateleira
+- **Anotações**: todos os destaques e notas de todos os livros, com busca, filtro por cor e exportação em Markdown
+- **Estatísticas**: tempo de leitura por dia, meta diária, sequência de dias, calendário do ano e livros terminados
+- **Leitor EPUB** paginado: 1 ou 2 páginas, largura do texto ajustável, sumário e **busca no livro** (ignora acentos)
+- **Tempo restante** no capítulo e no livro, aprendendo a sua velocidade de leitura
+- **Animação** ao virar a página (deslizar, esmaecer ou nenhuma)
+- **Atalhos de teclado** (`?` mostra todos): setas/Espaço, `T` sumário, `/` busca, `B` marcador, `A` aparência, `F` tela cheia
 - **Leitor PDF** com zoom, sumário (outline) e seleção de texto
 - **Sincronização**: salva a posição automaticamente; ao voltar para a aba, avisa "Você leu até 78% no celular. Ir para lá?"
 - **Tema** claro, sépia ou escuro; **fonte**, tamanho e espaçamento entre linhas (EPUB)
