@@ -18,22 +18,26 @@ model User {
   bookmarks    Bookmark[]
   highlights   Highlight[]
   preferences  Preferences?
+  readingDays  ReadingDay[]
 }
 
 model Book {
-  id         String      @id @default(cuid())
-  userId     String
-  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  title      String
-  author     String?
-  format     String // "EPUB" | "PDF"
-  filePath   String
-  fileSize   Int
-  coverPath  String?
-  createdAt  DateTime    @default(now())
-  progress   Progress[]
-  bookmarks  Bookmark[]
-  highlights Highlight[]
+  id          String       @id @default(cuid())
+  userId      String
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String
+  author      String?
+  format      String // "EPUB" | "PDF"
+  filePath    String
+  fileSize    Int
+  coverPath   String?
+  status      String? // "want" | "reading" | "finished"; null = deduzido do progresso
+  finishedAt  DateTime?
+  createdAt   DateTime     @default(now())
+  readingDays ReadingDay[]
+  progress    Progress[]
+  bookmarks   Bookmark[]
+  highlights  Highlight[]
 
   @@index([userId])
 }
@@ -87,4 +91,22 @@ model Preferences {
   fontSize   Int    @default(100)
   fontFamily String @default("serif")
   lineHeight Float  @default(1.6)
+  layout     String @default("auto") // "auto" | "single" | "double"
+  pageWidth  String @default("medium") // "narrow" | "medium" | "wide"
+  pageTurn   String @default("slide") // "slide" | "fade" | "none"
+  dailyGoal  Int    @default(20) // minutos por dia
+}
+
+/// Tempo de leitura ativo por livro e por dia (data local do aparelho, YYYY-MM-DD)
+model ReadingDay {
+  id      String @id @default(cuid())
+  userId  String
+  bookId  String
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  book    Book   @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  date    String
+  seconds Int    @default(0)
+
+  @@unique([userId, bookId, date])
+  @@index([userId, date])
 }

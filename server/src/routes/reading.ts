@@ -49,9 +49,28 @@ const preferencesBody = z.object({
   fontSize: z.number().int().min(60).max(250),
   fontFamily: z.enum(['serif', 'sans', 'mono']),
   lineHeight: z.number().min(1).max(2.5),
+  layout: z.enum(['auto', 'single', 'double']).default('auto'),
+  pageWidth: z.enum(['narrow', 'medium', 'wide']).default('medium'),
+  pageTurn: z.enum(['slide', 'fade', 'none']).default('slide'),
+  dailyGoal: z.number().int().min(1).max(600).default(20),
 });
 
-const DEFAULT_PREFS = { theme: 'light', fontSize: 100, fontFamily: 'serif', lineHeight: 1.6 };
+const DEFAULT_PREFS = {
+  theme: 'light',
+  fontSize: 100,
+  fontFamily: 'serif',
+  lineHeight: 1.6,
+  layout: 'auto',
+  pageWidth: 'medium',
+  pageTurn: 'slide',
+  dailyGoal: 20,
+};
+
+const activityBody = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  // no máximo 10 min por envio: o cliente manda a cada minuto, isso só cobre atrasos
+  seconds: z.number().int().min(1).max(600),
+});
 
 export async function readingRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
@@ -87,7 +106,67 @@ export async function readingRoutes(app: FastifyInstance) {
       create: { userId: uid, bookId, ...data },
       update: data,
     });
+    // Chegou ao fim: marca como lido (a menos que o usuário tenha escolhido outro status)
+    if (parsed.data.percent >= 0.99) {
+      await prisma.book.updateMany({
+        where: { id: bookId, userId: uid, finishedAt: null, status: null },
+        data: { finishedAt: updatedAt },
+      });
+    }
     return { progress, applied: true };
+  });
+
+  // ---- Tempo de leitura ----
+  app.post<BookParams>('/books/:id/activity', async (request, reply) => {
+    if (!(await ownBook(request, reply))) return;
+    const parsed = activityBody.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'Atividade inválida' });
+    const uid = userId(request);
+    const { date, seconds } = parsed.data;
+    const key = { userId_bookId_date: { userId: uid, bookId: request.params.id, date } };
+    await prisma.readingDay.upsert({
+      where: key,
+      create: { userId: uid, bookId: request.params.id, date, seconds },
+      update: { seconds: { increment: seconds } },
+    });
+    return { ok: true };
+  });
+
+  app.get('/stats', async (request) => {
+    const uid = userId(request);
+    const [rows, books] = await Promise.all([
+      prisma.readingDay.findMany({ where: { userId: uid }, select: { bookId: true, date: true, seconds: true } }),
+      prisma.book.findMany({
+        where: { userId: uid },
+        select: { id: true, title: true, author: true, coverPath: true, finishedAt: true, status: true },
+      }),
+    ]);
+    const days = new Map<string, number>();
+    const perBook = new Map<string, number>();
+    for (const r of rows) {
+      days.set(r.date, (days.get(r.date) ?? 0) + r.seconds);
+      perBook.set(r.bookId, (perBook.get(r.bookId) ?? 0) + r.seconds);
+    }
+    return {
+      days: [...days].map(([date, seconds]) => ({ date, seconds })).sort((a, b) => a.date.localeCompare(b.date)),
+      books: books.map((b) => ({
+        id: b.id,
+        title: b.title,
+        author: b.author,
+        hasCover: !!b.coverPath,
+        seconds: perBook.get(b.id) ?? 0,
+        finishedAt: b.finishedAt,
+      })),
+    };
+  });
+
+  // Todos os destaques, de todos os livros (aba Anotações)
+  app.get('/highlights', async (request) => {
+    return prisma.highlight.findMany({
+      where: { userId: userId(request) },
+      orderBy: { createdAt: 'desc' },
+      include: { book: { select: { id: true, title: true, author: true, format: true } } },
+    });
   });
 
   // ---- Marcadores ----

@@ -8,6 +8,38 @@ import { prisma } from '../db.js';
 import { env } from '../env.js';
 import { requireAuth, userId } from '../auth.js';
 import { readEpubMeta } from '../epub.js';
+import { z } from 'zod';
+import type { Book as DbBook } from '@prisma/client';
+
+const STATUSES = ['want', 'reading', 'finished'] as const;
+type Status = (typeof STATUSES)[number];
+
+const bookPatch = z.object({
+  title: z.string().trim().min(1).max(300).optional(),
+  author: z.string().trim().max(300).nullish(),
+  status: z.enum(STATUSES).nullish(),
+});
+
+/** Formato público do livro (o que o frontend recebe). */
+export function toPublicBook(b: DbBook, progress?: { percent: number; updatedAt: Date } | null) {
+  const percent = progress?.percent ?? 0;
+  const status: Status = (b.status as Status | null) ?? (b.finishedAt ? 'finished' : progress ? 'reading' : 'want');
+  return {
+    id: b.id,
+    title: b.title,
+    author: b.author,
+    format: b.format,
+    hasCover: !!b.coverPath,
+    // muda quando a capa é trocada: serve para furar o cache do navegador
+    coverKey: b.coverPath ? path.basename(b.coverPath) : null,
+    createdAt: b.createdAt,
+    percent,
+    lastReadAt: progress?.updatedAt ?? null,
+    status,
+    finishedAt: b.finishedAt,
+    fileSize: b.fileSize,
+  };
+}
 
 const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg']);
 
@@ -37,19 +69,7 @@ export async function bookRoutes(app: FastifyInstance) {
       include: { progress: { where: { userId: uid } } },
     });
     return books
-      .map((b) => {
-        const p = b.progress[0];
-        return {
-          id: b.id,
-          title: b.title,
-          author: b.author,
-          format: b.format,
-          hasCover: !!b.coverPath,
-          createdAt: b.createdAt,
-          percent: p?.percent ?? 0,
-          lastReadAt: p?.updatedAt ?? null,
-        };
-      })
+      .map((b) => toPublicBook(b, b.progress[0]))
       .sort((a, b) => {
         const ta = new Date(a.lastReadAt ?? a.createdAt).getTime();
         const tb = new Date(b.lastReadAt ?? b.createdAt).getTime();
@@ -58,9 +78,58 @@ export async function bookRoutes(app: FastifyInstance) {
   });
 
   app.get<{ Params: { id: string } }>('/books/:id', async (request, reply) => {
-    const book = await prisma.book.findFirst({ where: { id: request.params.id, userId: userId(request) } });
+    const uid = userId(request);
+    const book = await prisma.book.findFirst({
+      where: { id: request.params.id, userId: uid },
+      include: { progress: { where: { userId: uid } } },
+    });
     if (!book) return reply.code(404).send({ error: 'Livro não encontrado' });
-    return { id: book.id, title: book.title, author: book.author, format: book.format, hasCover: !!book.coverPath };
+    return toPublicBook(book, book.progress[0]);
+  });
+
+  app.patch<{ Params: { id: string } }>('/books/:id', async (request, reply) => {
+    const parsed = bookPatch.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'Dados inválidos' });
+    const uid = userId(request);
+    const book = await prisma.book.findFirst({ where: { id: request.params.id, userId: uid } });
+    if (!book) return reply.code(404).send({ error: 'Livro não encontrado' });
+    const { title, author, status } = parsed.data;
+    const data: Partial<DbBook> = {};
+    if (title !== undefined) data.title = title;
+    if (author !== undefined) data.author = author || null;
+    if (status !== undefined) {
+      data.status = status ?? null;
+      if (status === 'finished') data.finishedAt = book.finishedAt ?? new Date();
+      else data.finishedAt = null;
+    }
+    const updated = await prisma.book.update({
+      where: { id: book.id },
+      data,
+      include: { progress: { where: { userId: uid } } },
+    });
+    return toPublicBook(updated, updated.progress[0]);
+  });
+
+  app.put<{ Params: { id: string } }>('/books/:id/cover', async (request, reply) => {
+    const uid = userId(request);
+    const book = await prisma.book.findFirst({
+      where: { id: request.params.id, userId: uid },
+      include: { progress: { where: { userId: uid } } },
+    });
+    if (!book) return reply.code(404).send({ error: 'Livro não encontrado' });
+    const part = await request.file();
+    if (!part) return reply.code(400).send({ error: 'Envie uma imagem' });
+    const data = await part.toBuffer();
+    const ext = (part.mimetype.split('/')[1] ?? '').replace('jpeg', 'jpg').replace('svg+xml', 'svg');
+    if (!IMAGE_EXTS.has(ext) || !data.length) return reply.code(400).send({ error: 'Imagem inválida' });
+    if (data.length > 8 * 1024 * 1024) return reply.code(413).send({ error: 'Imagem grande demais (máx. 8MB)' });
+
+    await fs.mkdir(path.join(env.storageDir, 'covers'), { recursive: true });
+    const coverRel = path.join('covers', `${book.id}-${randomUUID().slice(0, 8)}.${ext}`);
+    await fs.writeFile(path.join(env.storageDir, coverRel), data);
+    if (book.coverPath) await fs.rm(path.join(env.storageDir, book.coverPath), { force: true });
+    const updated = await prisma.book.update({ where: { id: book.id }, data: { coverPath: coverRel } });
+    return toPublicBook(updated, book.progress[0]);
   });
 
   app.post('/books', async (request, reply) => {
@@ -143,16 +212,7 @@ export async function bookRoutes(app: FastifyInstance) {
         },
       });
 
-      return reply.code(201).send({
-        id: book.id,
-        title: book.title,
-        author: book.author,
-        format: book.format,
-        hasCover: !!book.coverPath,
-        createdAt: book.createdAt,
-        percent: 0,
-        lastReadAt: null,
-      });
+      return reply.code(201).send(toPublicBook(book, null));
     } catch (err) {
       await fs.rm(tmpPath, { force: true });
       throw err;
