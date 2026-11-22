@@ -1,10 +1,29 @@
-import type { FontFamily, Theme } from '../lib/api';
+import type { FontFamily, Layout, PageTurn, PageWidth, Theme } from '../lib/api';
+import { Icon } from './Icon';
 import { usePrefs } from '../lib/prefs';
 
 const THEMES: { id: Theme; label: string }[] = [
   { id: 'light', label: 'Claro' },
   { id: 'sepia', label: 'Sépia' },
   { id: 'dark', label: 'Escuro' },
+];
+
+const LAYOUTS: { id: Layout; label: string }[] = [
+  { id: 'auto', label: 'Automático' },
+  { id: 'single', label: '1 página' },
+  { id: 'double', label: '2 páginas' },
+];
+
+const WIDTHS: { id: PageWidth; label: string }[] = [
+  { id: 'narrow', label: 'Estreita' },
+  { id: 'medium', label: 'Média' },
+  { id: 'wide', label: 'Larga' },
+];
+
+const TURNS: { id: PageTurn; label: string }[] = [
+  { id: 'slide', label: 'Deslizar' },
+  { id: 'fade', label: 'Esmaecer' },
+  { id: 'none', label: 'Nenhuma' },
 ];
 
 const FONTS: { id: FontFamily; label: string }[] = [
@@ -17,7 +36,7 @@ export function ThemeSwitch() {
   const { prefs, update } = usePrefs();
   const order: Theme[] = ['light', 'sepia', 'dark'];
   const next = order[(order.indexOf(prefs.theme) + 1) % order.length];
-  const icon = prefs.theme === 'dark' ? '☾' : prefs.theme === 'sepia' ? '◐' : '☀';
+  const icon = prefs.theme === 'dark' ? 'moon' : prefs.theme === 'sepia' ? 'sepia' : 'sun';
   return (
     <button
       className="icon-btn"
@@ -25,7 +44,7 @@ export function ThemeSwitch() {
       aria-label={`Tema: ${THEMES.find((t) => t.id === prefs.theme)?.label}. Trocar`}
       title="Trocar tema"
     >
-      {icon}
+      <Icon name={icon} />
     </button>
   );
 }
@@ -110,10 +129,43 @@ export function SettingsPanel({ textControls }: { textControls: boolean }) {
               </button>
             </div>
           </div>
+
+          <div className="field">
+            <span className="field-label">Páginas na tela</span>
+            <div className="segmented">
+              {LAYOUTS.map((l) => (
+                <button key={l.id} aria-selected={prefs.layout === l.id} onClick={() => update({ layout: l.id })}>
+                  {l.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="field">
+            <span className="field-label">Largura do texto</span>
+            <div className="segmented">
+              {WIDTHS.map((w) => (
+                <button key={w.id} aria-selected={prefs.pageWidth === w.id} onClick={() => update({ pageWidth: w.id })}>
+                  {w.label}
+                </button>
+              ))}
+            </div>
+          </div>
         </>
       ) : (
         <p className="muted small">Em PDFs o layout é fixo: use o zoom no canto da tela para ajustar o tamanho.</p>
       )}
+
+      <div className="field">
+        <span className="field-label">Animação ao virar a página</span>
+        <div className="segmented">
+          {TURNS.map((t) => (
+            <button key={t.id} aria-selected={prefs.pageTurn === t.id} onClick={() => update({ pageTurn: t.id })}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

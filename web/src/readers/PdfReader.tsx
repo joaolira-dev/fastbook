@@ -5,7 +5,7 @@ import 'react-pdf/dist/Page/TextLayer.css';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import '../lib/pdf';
 import { fileUrl, type Highlight } from '../lib/api';
-import { tapZone, type ReaderHandle, type ReaderProps, type TocItem } from './types';
+import { animateTurn, foldText, SEARCH_LIMIT, tapZone, type ReaderHandle, type ReaderProps, type SearchHit, type TocItem } from './types';
 
 type OutlineNode = Awaited<ReturnType<PDFDocumentProxy['getOutline']>>[number];
 
@@ -75,12 +75,17 @@ export const PdfReader = forwardRef<ReaderHandle, ReaderProps>(function PdfReade
   const [aspect, setAspect] = useState(1.414); // altura / largura
   const [zoom, setZoom] = useState(1);
   const pdfRef = useRef<PDFDocumentProxy | null>(null);
+  const tocPages = useRef<number[]>([]);
+  const turnDir = useRef<1 | -1 | 0>(0);
 
   const go = useCallback(
     (p: number) => {
       setPage((cur) => {
         const next = Math.min(Math.max(1, p), numPages || p);
-        if (next !== cur) wrapRef.current?.scrollTo({ top: 0 });
+        if (next !== cur) {
+          wrapRef.current?.scrollTo({ top: 0 });
+          turnDir.current = next > cur ? 1 : -1;
+        }
         return next;
       });
     },
@@ -91,6 +96,31 @@ export const PdfReader = forwardRef<ReaderHandle, ReaderProps>(function PdfReade
     next: () => go(page + 1),
     prev: () => go(page - 1),
     goTo: (loc) => go(parseInt(loc, 10) || 1),
+    search: async (query, signal) => {
+      const pdf = pdfRef.current;
+      const q = foldText(query.trim());
+      if (!pdf || q.length < 2) return [];
+      const hits: SearchHit[] = [];
+      for (let p = 1; p <= pdf.numPages && hits.length < SEARCH_LIMIT; p++) {
+        if (signal.aborted) break;
+        try {
+          const tc = await (await pdf.getPage(p)).getTextContent();
+          const text = norm(tc.items.map((it) => ('str' in it ? it.str : '')).join(' '));
+          const folded = foldText(text);
+          for (let at = folded.indexOf(q); at >= 0 && hits.length < SEARCH_LIMIT; at = folded.indexOf(q, at + q.length)) {
+            const from = Math.max(0, at - 60);
+            hits.push({
+              location: String(p),
+              excerpt: (from > 0 ? '…' : '') + text.slice(from, at + q.length + 80) + '…',
+              label: `Página ${p}`,
+            });
+          }
+        } catch {
+          /* página sem texto */
+        }
+      }
+      return hits;
+    },
   }));
 
   // Tamanho disponível
@@ -108,8 +138,14 @@ export const PdfReader = forwardRef<ReaderHandle, ReaderProps>(function PdfReade
   useEffect(() => {
     if (!numPages) return;
     const loc = String(page);
+    const nextChapter = tocPages.current.find((p) => p > page);
+    if (turnDir.current) {
+      animateTurn(pageRef.current, propsRef.current.prefs.pageTurn, turnDir.current);
+      turnDir.current = 0;
+    }
     props.onLocation({
       location: loc,
+      remaining: { unit: 'pages', book: numPages - page + 1, chapter: nextChapter ? nextChapter - page : undefined },
       percent: numPages > 1 ? (page - 1) / (numPages - 1) : 1,
       label: `Página ${page} de ${numPages}`,
       contains: (l) => l === loc,
@@ -120,15 +156,16 @@ export const PdfReader = forwardRef<ReaderHandle, ReaderProps>(function PdfReade
   // Teclado
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement).closest?.('input, textarea, select')) return;
-      if (e.key === 'ArrowRight' || e.key === 'PageDown') go(page + 1);
-      if (e.key === 'ArrowLeft' || e.key === 'PageUp') go(page - 1);
+      if ((e.target as HTMLElement)?.closest?.('input, textarea, select, [role="dialog"]')) return;
+      if (e.altKey) return;
+      if (e.key === 'ArrowRight' || e.key === 'PageDown' || (e.key === ' ' && !e.shiftKey && zoom <= 1)) go(page + 1);
+      if (e.key === 'ArrowLeft' || e.key === 'PageUp' || (e.key === ' ' && e.shiftKey && zoom <= 1)) go(page - 1);
       if ((e.key === '+' || e.key === '=') && !e.ctrlKey && !e.metaKey) setZoom((z) => Math.min(4, z + 0.25));
       if (e.key === '-' && !e.ctrlKey && !e.metaKey) setZoom((z) => Math.max(0.5, z - 0.25));
     };
-    window.addEventListener('keyup', onKey);
-    return () => window.removeEventListener('keyup', onKey);
-  }, [go, page]);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [go, page, zoom]);
 
   // Seleção de texto (mouse e toque)
   useEffect(() => {
@@ -208,6 +245,8 @@ export const PdfReader = forwardRef<ReaderHandle, ReaderProps>(function PdfReade
     } catch {
       /* sem sumário */
     }
+    const flat = (items: TocItem[]): number[] => items.flatMap((t) => [parseInt(t.location, 10), ...flat(t.children ?? [])]);
+    tocPages.current = [...new Set(flat(toc))].sort((a, b) => a - b);
     propsRef.current.onReady(toc);
   }
 

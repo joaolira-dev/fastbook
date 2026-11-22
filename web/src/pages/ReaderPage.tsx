@@ -1,13 +1,31 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type Book, type Bookmark, type Highlight, type HighlightColor } from '../lib/api';
 import { usePrefs } from '../lib/prefs';
 import { useProgressSync } from '../lib/useProgressSync';
-import { HIGHLIGHT_FILL, type ReaderHandle, type ReaderLocation, type SelectionInfo, type TocItem } from '../readers/types';
+import { HIGHLIGHT_FILL, type ReaderHandle, type ReaderLocation, type SearchHit, type SelectionInfo, type TocItem } from '../readers/types';
 import { SettingsPanel } from '../components/SettingsPanel';
-import { SidePanel, type PanelTab } from '../components/SidePanel';
+import { SidePanel, type PanelTab, type SearchState } from '../components/SidePanel';
 import { Popover } from '../components/Popover';
+import { Icon } from '../components/Icon';
+import { useReadingActivity } from '../lib/useReadingActivity';
+import { formatMinutes, getSpeed, resetTracking, trackPosition } from '../lib/readingSpeed';
+
+const SHORTCUTS: [string, string][] = [
+  ['→ / Espaço', 'Próxima página'],
+  ['← / Shift+Espaço', 'Página anterior'],
+  ['T', 'Sumário'],
+  ['/', 'Buscar no livro'],
+  ['B', 'Marcar / desmarcar página'],
+  ['N', 'Destaques e notas'],
+  ['M', 'Marcadores'],
+  ['A', 'Aparência'],
+  ['F', 'Tela cheia'],
+  ['H', 'Mostrar / esconder barras'],
+  ['?', 'Esta ajuda'],
+  ['Esc', 'Fechar painéis'],
+];
 
 const EpubReader = lazy(() => import('../readers/EpubReader').then((m) => ({ default: m.EpubReader })));
 const PdfReader = lazy(() => import('../readers/PdfReader').then((m) => ({ default: m.PdfReader })));
@@ -25,11 +43,23 @@ export function ReaderPage() {
   const bookmarks = useQuery({ queryKey: ['bookmarks', id], queryFn: () => api<Bookmark[]>(`/books/${id}/bookmarks`) });
   const highlights = useQuery({ queryKey: ['highlights', id], queryFn: () => api<Highlight[]>(`/books/${id}/highlights`) });
   const sync = useProgressSync(id);
+  const [params] = useSearchParams();
+  const jumpTo = useRef(params.get('ir'));
+  const poke = useReadingActivity(id);
+  const [help, setHelp] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [search, setSearch] = useState<SearchState>({ query: '', hits: [], busy: false, done: false });
+  const searchAbort = useRef<AbortController | null>(null);
 
   const [toc, setToc] = useState<TocItem[]>([]);
   const [loc, setLoc] = useState<ReaderLocation | null>(null);
   const [chrome, setChrome] = useState(true);
   const [panel, setPanel] = useState<PanelTab | 'settings' | null>(null);
+  const [panelKey, setPanelKey] = useState(0);
+  const openPanel = (p: PanelTab | 'settings') => {
+    setPanel(p);
+    setPanelKey((k) => k + 1);
+  };
   const [selection, setSelection] = useState<SelectionInfo | null>(null);
   const [editing, setEditing] = useState<Highlight | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -68,30 +98,92 @@ export function ReaderPage() {
       lastLocation.current = l.location;
       setLoc(l);
       sync.report(l.location, l.percent);
+      if (l.remaining) trackPosition(l.remaining.unit, l.remaining.book);
+      poke();
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sync.report],
+    [sync.report, poke],
   );
+
+  useEffect(() => {
+    resetTracking();
+    return () => searchAbort.current?.abort();
+  }, [id]);
+
+  async function runSearch(query: string) {
+    searchAbort.current?.abort();
+    const q = query.trim();
+    if (q.length < 2) {
+      setSearch({ query: q, hits: [], busy: false, done: false });
+      return;
+    }
+    const ctrl = new AbortController();
+    searchAbort.current = ctrl;
+    setSearch({ query: q, hits: [], busy: true, done: false });
+    const hits = (await readerRef.current?.search(q, ctrl.signal)) ?? [];
+    if (!ctrl.signal.aborted) setSearch({ query: q, hits, busy: false, done: true });
+  }
+
+  function goHit(hit: SearchHit) {
+    readerRef.current?.goTo(hit.location, { flash: true });
+    setPanel(null);
+  }
+
+  function toggleFullscreen() {
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void document.documentElement.requestFullscreen?.().catch(() => {});
+  }
+
+  useEffect(() => {
+    const on = () => setFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', on);
+    return () => document.removeEventListener('fullscreenchange', on);
+  }, []);
 
   const onSelection = useCallback((s: SelectionInfo | null) => setSelection(s && s.text ? s : null), []);
   const onHighlightClick = useCallback((h: Highlight) => setEditing(h), []);
   const onTap = useCallback(() => setChrome((c) => !c), []);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setPanel(null);
-        setEditing(null);
-      }
+  // Atalhos de teclado
+  const shortcutRef = useRef<(e: KeyboardEvent) => void>(() => {});
+  shortcutRef.current = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      setPanel(null);
+      setEditing(null);
+      setHelp(false);
+      return;
+    }
+    const t = e.target as HTMLElement | null;
+    if (t?.closest?.('input, textarea, select') || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (editing) return;
+    const k = e.key.toLowerCase();
+    const actions: Record<string, () => void> = {
+      t: () => (panel === 'toc' ? setPanel(null) : openPanel('toc')),
+      '/': () => openPanel('search'),
+      b: toggleBookmark,
+      n: () => (panel === 'highlights' ? setPanel(null) : openPanel('highlights')),
+      m: () => (panel === 'bookmarks' ? setPanel(null) : openPanel('bookmarks')),
+      a: () => (panel === 'settings' ? setPanel(null) : openPanel('settings')),
+      f: toggleFullscreen,
+      h: () => setChrome((c) => !c),
+      '?': () => setHelp((h) => !h),
     };
+    const fn = actions[e.key === '?' ? '?' : k];
+    if (fn) {
+      e.preventDefault();
+      fn();
+    }
+  };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => shortcutRef.current(e);
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
   useEffect(() => {
-    if (book.data) document.title = `${book.data.title} · Estante`;
+    if (book.data) document.title = `${book.data.title} · fastbook`;
     return () => {
-      document.title = 'Estante';
+      document.title = 'fastbook';
       qc.invalidateQueries({ queryKey: ['books'] });
     };
   }, [book.data, qc]);
@@ -131,7 +223,7 @@ export function ReaderPage() {
       <div className="reader-error">
         <p>Livro não encontrado.</p>
         <Link to="/" className="btn">
-          Voltar à estante
+          Voltar à biblioteca
         </Link>
       </div>
     );
@@ -139,31 +231,53 @@ export function ReaderPage() {
 
   const ReaderComp = isPdf ? PdfReader : EpubReader;
   const percent = Math.round((loc?.percent ?? 0) * 100);
+  const rem = loc?.remaining;
+  const speed = rem ? getSpeed(rem.unit) : 0;
+  const timeLeft = rem
+    ? {
+        chapter: rem.chapter !== undefined ? formatMinutes(rem.chapter / speed) : null,
+        book: formatMinutes(rem.book / speed),
+      }
+    : null;
 
   return (
     <div className={`reader ${chrome ? 'chrome-on' : 'chrome-off'}`}>
       <header className="reader-bar reader-top">
-        <Link to="/" className="icon-btn" aria-label="Voltar à estante" title="Estante">
-          ←
+        <Link to="/" className="icon-btn" aria-label="Voltar à biblioteca" title="Biblioteca">
+          <Icon name="back" />
         </Link>
         <div className="reader-title">
           <strong>{book.data?.title ?? ''}</strong>
           {loc?.label && <span className="muted small">{loc.label}</span>}
         </div>
-        <button className="icon-btn" onClick={() => setPanel('toc')} aria-label="Sumário e anotações" title="Sumário">
-          ☰
+        <button className="icon-btn" onClick={() => openPanel('search')} aria-label="Buscar no livro" title="Buscar (/)">
+          <Icon name="search" />
+        </button>
+        <button className="icon-btn" onClick={() => openPanel('toc')} aria-label="Sumário e anotações" title="Sumário (T)">
+          <Icon name="toc" />
         </button>
         <button
           className={`icon-btn ${currentBookmarks.length ? 'active' : ''}`}
           onClick={toggleBookmark}
           aria-pressed={currentBookmarks.length > 0}
           aria-label={currentBookmarks.length ? 'Remover marcador' : 'Marcar esta página'}
-          title="Marcador"
+          title="Marcador (B)"
         >
-          {currentBookmarks.length ? '🔖' : '🏷'}
+          <Icon name="bookmark" fill={currentBookmarks.length ? 'currentColor' : 'none'} />
         </button>
-        <button className="icon-btn" onClick={() => setPanel('settings')} aria-label="Aparência" title="Aparência">
-          Aa
+        <button className="icon-btn" onClick={() => openPanel('settings')} aria-label="Aparência" title="Aparência (A)">
+          <Icon name="type" />
+        </button>
+        <button
+          className="icon-btn desktop-only"
+          onClick={toggleFullscreen}
+          aria-label={fullscreen ? 'Sair da tela cheia' : 'Tela cheia'}
+          title="Tela cheia (F)"
+        >
+          <Icon name={fullscreen ? 'exitFullscreen' : 'fullscreen'} />
+        </button>
+        <button className="icon-btn desktop-only" onClick={() => setHelp(true)} aria-label="Atalhos de teclado" title="Atalhos (?)">
+          <Icon name="keyboard" />
         </button>
       </header>
 
@@ -173,7 +287,7 @@ export function ReaderPage() {
           <ReaderComp
             ref={readerRef}
             bookId={id}
-            initialLocation={lastLocation.current ?? sync.initial?.location ?? null}
+            initialLocation={lastLocation.current ?? jumpTo.current ?? sync.initial?.location ?? null}
             prefs={prefs}
             highlights={hls}
             chromeVisible={chrome}
@@ -187,20 +301,34 @@ export function ReaderPage() {
           </Suspense>
         )}
         {error && <div className="reader-loading error">{error}</div>}
+        <button className="edge-nav edge-prev" onClick={() => readerRef.current?.prev()} aria-label="Página anterior" tabIndex={-1}>
+          <Icon name="chevronLeft" size={28} />
+        </button>
+        <button className="edge-nav edge-next" onClick={() => readerRef.current?.next()} aria-label="Próxima página" tabIndex={-1}>
+          <Icon name="chevronRight" size={28} />
+        </button>
       </main>
 
       <footer className="reader-bar reader-bottom">
         <button className="icon-btn nav-btn" onClick={() => readerRef.current?.prev()} aria-label="Página anterior">
-          ‹
+          <Icon name="chevronLeft" size={24} />
         </button>
         <div className="reader-progress">
           <div className="bar">
             <span style={{ width: `${percent}%` }} />
           </div>
-          <span className="muted small">{isPdf ? loc?.label : `${percent}%`}</span>
+          <div className="reader-progress-info small">
+            <span>{isPdf ? loc?.label : `${percent}%`}</span>
+            {timeLeft && (
+              <span className="muted">
+                {timeLeft.chapter && <span className="desktop-inline">{timeLeft.chapter} no capítulo · </span>}
+                {timeLeft.book} no livro
+              </span>
+            )}
+          </div>
         </div>
         <button className="icon-btn nav-btn" onClick={() => readerRef.current?.next()} aria-label="Próxima página">
-          ›
+          <Icon name="chevronRight" size={24} />
         </button>
       </footer>
 
@@ -267,14 +395,43 @@ export function ReaderPage() {
         />
       )}
 
+      {help && (
+        <>
+          <div className="scrim" onClick={() => setHelp(false)} />
+          <div className="dialog dialog-sm" role="dialog" aria-label="Atalhos de teclado">
+            <div className="sheet-head">
+              <strong>Atalhos de teclado</strong>
+              <button className="icon-btn" onClick={() => setHelp(false)} aria-label="Fechar">
+                <Icon name="close" />
+              </button>
+            </div>
+            <dl className="shortcuts">
+              {SHORTCUTS.map(([k, label]) => (
+                <div key={k}>
+                  <dt>
+                    {k.split(' / ').map((part, i) => (
+                      <span key={part}>
+                        {i > 0 && ' ou '}
+                        <kbd>{part}</kbd>
+                      </span>
+                    ))}
+                  </dt>
+                  <dd>{label}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        </>
+      )}
+
       {panel === 'settings' && (
         <>
-          <div className="scrim" onClick={() => setPanel(null)} />
-          <div className="sheet sheet-bottom" role="dialog" aria-label="Aparência">
+          <div className="scrim scrim-light" onClick={() => setPanel(null)} />
+          <div className="sheet sheet-bottom sheet-settings" role="dialog" aria-label="Aparência">
             <div className="sheet-head">
               <strong>Aparência</strong>
               <button className="icon-btn" onClick={() => setPanel(null)} aria-label="Fechar">
-                ✕
+                <Icon name="close" />
               </button>
             </div>
             <SettingsPanel textControls={!isPdf} />
@@ -284,7 +441,11 @@ export function ReaderPage() {
 
       {panel && panel !== 'settings' && (
         <SidePanel
+          key={panelKey}
           initialTab={panel}
+          search={search}
+          onSearch={runSearch}
+          onGoHit={goHit}
           toc={toc}
           bookmarks={bms}
           highlights={hls}
@@ -317,7 +478,7 @@ function HighlightSheet(props: {
         <div className="sheet-head">
           <strong>Destaque</strong>
           <button className="icon-btn" onClick={props.onClose} aria-label="Fechar">
-            ✕
+            <Icon name="close" />
           </button>
         </div>
         <blockquote className={`hl-quote hl-border-${props.highlight.color}`}>“{props.highlight.text}”</blockquote>
