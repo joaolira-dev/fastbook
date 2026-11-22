@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useAuth } from '../lib/auth';
+import { Brand } from '../components/Brand';
 
 export function LoginPage() {
   const { login, register } = useAuth();
@@ -27,12 +28,7 @@ export function LoginPage() {
   return (
     <main className="auth">
       <div className="auth-card">
-        <div className="brand brand-lg">
-          <span className="brand-mark" aria-hidden>
-            ❦
-          </span>
-          Estante
-        </div>
+        <Brand large />
         <p className="auth-sub">Seus livros, no ponto onde você parou, em qualquer aparelho.</p>
 
         <div className="segmented" role="tablist">

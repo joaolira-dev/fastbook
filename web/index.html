@@ -4,8 +4,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#f7f5f0" />
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>" />
-    <title>Estante</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23b4532a'/%3E%3Cpath d='M8 10.5c2.6-.9 5.3-.6 8 1v12c-2.7-1.6-5.4-1.9-8-1z' fill='%23fff'/%3E%3Cpath d='M24 10.5c-2.6-.9-5.3-.6-8 1v12c2.7-1.6 5.4-1.9 8-1z' fill='%23fff' opacity='.72'/%3E%3Cpath d='M3 14h3M2 18h4' stroke='%23fff' stroke-width='1.8' stroke-linecap='round'/%3E%3C/svg%3E" />
+    <title>fastbook</title>
+    <script>
+      // Aplica o tema salvo antes de desenhar, para não piscar o tema claro ao abrir
+      try {
+        var p = JSON.parse(localStorage.getItem('fastbook:prefs') || localStorage.getItem('estante:prefs') || '{}');
+        if (p.theme) document.documentElement.dataset.theme = p.theme;
+      } catch (e) {}
+    </script>
+    <meta name="description" content="fastbook: seus livros EPUB e PDF, sincronizados entre aparelhos." />
   </head>
   <body>
     <div id="root"></div>
