@@ -23,16 +23,17 @@ services:
         value: s3
       - key: S3_BUCKET
         value: books
+      # Supabase Storage do projeto fastbook (não são segredos)
+      - key: S3_ENDPOINT
+        value: https://grqasfvrmmnoqiotxmag.storage.supabase.co/storage/v1/s3
+      - key: S3_REGION
+        value: us-west-2
       - key: MAX_UPLOAD_MB
         value: "50"
       - key: TMP_DIR
         value: /tmp/fastbook
       # Preencha no painel do Render (valores do Supabase):
       - key: DATABASE_URL
-        sync: false
-      - key: S3_ENDPOINT
-        sync: false
-      - key: S3_REGION
         sync: false
       - key: S3_ACCESS_KEY_ID
         sync: false

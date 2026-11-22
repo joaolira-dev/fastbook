@@ -21,8 +21,9 @@ O app roda no **Render** (plano free) e guarda banco e arquivos no **Supabase** 
 
 1. Em https://render.com, entre com o GitHub (conta `joaolira-dev`).
 2. **New** → **Blueprint** → escolha o repositório `fastbook`. O Render lê o `render.yaml`.
-3. Ele pede os 5 valores marcados como "sync: false": cole `DATABASE_URL`, `S3_ENDPOINT`,
-   `S3_REGION`, `S3_ACCESS_KEY_ID` e `S3_SECRET_ACCESS_KEY` do passo 1.
+3. Ele pede os 3 valores secretos ("sync: false"): cole `DATABASE_URL`, `S3_ACCESS_KEY_ID`
+   e `S3_SECRET_ACCESS_KEY` do passo 1. (`S3_ENDPOINT` e `S3_REGION` já estão no `render.yaml`;
+   se usar outro projeto do Supabase, troque-os lá.)
 4. **Apply**. O primeiro build leva alguns minutos; as tabelas são criadas sozinhas na primeira subida.
 5. O endereço fica em `https://fastbook-xxxx.onrender.com`. Crie sua conta pelo próprio app.
 
