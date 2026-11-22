@@ -8,6 +8,7 @@ import { prisma } from '../db.js';
 import { env } from '../env.js';
 import { requireAuth, userId } from '../auth.js';
 import { readEpubMeta } from '../epub.js';
+import { storage } from '../storage.js';
 import { z } from 'zod';
 import type { Book as DbBook } from '@prisma/client';
 
@@ -42,6 +43,16 @@ export function toPublicBook(b: DbBook, progress?: { percent: number; updatedAt:
 }
 
 const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg']);
+const IMAGE_TYPES: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  svg: 'image/svg+xml',
+};
+const imageType = (key: string) => IMAGE_TYPES[path.extname(key).slice(1).toLowerCase()] ?? 'application/octet-stream';
+const BOOK_TYPES = { PDF: 'application/pdf', EPUB: 'application/epub+zip' } as const;
 
 async function detectFormat(filePath: string): Promise<'EPUB' | 'PDF' | null> {
   const fh = await fs.open(filePath, 'r');
@@ -124,10 +135,9 @@ export async function bookRoutes(app: FastifyInstance) {
     if (!IMAGE_EXTS.has(ext) || !data.length) return reply.code(400).send({ error: 'Imagem inválida' });
     if (data.length > 8 * 1024 * 1024) return reply.code(413).send({ error: 'Imagem grande demais (máx. 8MB)' });
 
-    await fs.mkdir(path.join(env.storageDir, 'covers'), { recursive: true });
-    const coverRel = path.join('covers', `${book.id}-${randomUUID().slice(0, 8)}.${ext}`);
-    await fs.writeFile(path.join(env.storageDir, coverRel), data);
-    if (book.coverPath) await fs.rm(path.join(env.storageDir, book.coverPath), { force: true });
+    const coverRel = `covers/${book.id}-${randomUUID().slice(0, 8)}.${ext}`;
+    await storage.put(coverRel, { data }, imageType(coverRel));
+    if (book.coverPath) await storage.remove(book.coverPath).catch(() => {});
     const updated = await prisma.book.update({ where: { id: book.id }, data: { coverPath: coverRel } });
     return toPublicBook(updated, book.progress[0]);
   });
@@ -135,12 +145,7 @@ export async function bookRoutes(app: FastifyInstance) {
   app.post('/books', async (request, reply) => {
     const uid = userId(request);
     const id = randomUUID();
-    const userDir = path.join(env.storageDir, uid);
-    const coverDir = path.join(env.storageDir, 'covers');
-    await fs.mkdir(userDir, { recursive: true });
-    await fs.mkdir(coverDir, { recursive: true });
-
-    const tmpPath = path.join(userDir, `${id}.upload`);
+    const tmpPath = path.join(env.tmpDir, `${id}.upload`);
     let originalName = '';
     let gotFile = false;
     let clientCover: { data: Buffer; ext: string } | undefined;
@@ -152,7 +157,7 @@ export async function bookRoutes(app: FastifyInstance) {
           if (part.fieldname === 'file') {
             originalName = part.filename;
             await pipeline(part.file, createWriteStream(tmpPath));
-            if (part.file.truncated) throw Object.assign(new Error('Arquivo grande demais (máx. 200MB)'), { statusCode: 413 });
+            if (part.file.truncated) throw Object.assign(new Error(`Arquivo grande demais (máx. ${env.maxUploadMb}MB)`), { statusCode: 413 });
             gotFile = true;
           } else if (part.fieldname === 'cover') {
             const data = await part.toBuffer();
@@ -174,9 +179,8 @@ export async function bookRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: 'Formato não suportado. Envie um EPUB ou PDF.' });
       }
 
-      const finalRel = path.join(uid, `${id}.${format.toLowerCase()}`);
-      await fs.rename(tmpPath, path.join(env.storageDir, finalRel));
-      const stat = await fs.stat(path.join(env.storageDir, finalRel));
+      const finalRel = `${uid}/${id}.${format.toLowerCase()}`;
+      const stat = await fs.stat(tmpPath);
 
       let title = fields.title?.trim() || undefined;
       let author = fields.author?.trim() || undefined;
@@ -184,7 +188,7 @@ export async function bookRoutes(app: FastifyInstance) {
 
       if (format === 'EPUB') {
         try {
-          const meta = await readEpubMeta(await fs.readFile(path.join(env.storageDir, finalRel)));
+          const meta = await readEpubMeta(await fs.readFile(tmpPath));
           title = meta.title ?? title;
           author = meta.author ?? author;
           cover = meta.cover ?? cover;
@@ -193,10 +197,13 @@ export async function bookRoutes(app: FastifyInstance) {
         }
       }
 
+      await storage.put(finalRel, { path: tmpPath }, BOOK_TYPES[format]);
+      await fs.rm(tmpPath, { force: true });
+
       let coverRel: string | null = null;
       if (cover) {
-        coverRel = path.join('covers', `${id}.${cover.ext}`);
-        await fs.writeFile(path.join(env.storageDir, coverRel), cover.data);
+        coverRel = `covers/${id}.${cover.ext}`;
+        await storage.put(coverRel, { data: cover.data }, imageType(coverRel));
       }
 
       const book = await prisma.book.create({
@@ -222,8 +229,12 @@ export async function bookRoutes(app: FastifyInstance) {
   app.get<{ Params: { id: string } }>('/books/:id/file', async (request, reply) => {
     const book = await prisma.book.findFirst({ where: { id: request.params.id, userId: userId(request) } });
     if (!book) return reply.code(404).send({ error: 'Livro não encontrado' });
-    reply.type(book.format === 'PDF' ? 'application/pdf' : 'application/epub+zip');
-    return reply.sendFile(book.filePath, env.storageDir, { cacheControl: false });
+    const file = await storage.get(book.filePath);
+    if (!file) return reply.code(404).send({ error: 'Arquivo não encontrado' });
+    reply.type(BOOK_TYPES[book.format as keyof typeof BOOK_TYPES] ?? 'application/octet-stream');
+    reply.header('Cache-Control', 'private, no-cache');
+    if (file.size !== undefined) reply.header('Content-Length', file.size);
+    return reply.send(file.stream);
   });
 
   app.get<{ Params: { id: string } }>('/books/:id/cover', async (request, reply) => {
@@ -232,15 +243,20 @@ export async function bookRoutes(app: FastifyInstance) {
     // Capas SVG vêm de arquivos enviados: nunca deixar executar script se abertas direto
     reply.header('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; img-src data:");
     reply.header('X-Content-Type-Options', 'nosniff');
-    return reply.sendFile(book.coverPath, env.storageDir, { maxAge: '7d', immutable: true });
+    const file = await storage.get(book.coverPath);
+    if (!file) return reply.code(404).send({ error: 'Sem capa' });
+    reply.type(imageType(book.coverPath));
+    reply.header('Cache-Control', 'private, max-age=604800, immutable');
+    if (file.size !== undefined) reply.header('Content-Length', file.size);
+    return reply.send(file.stream);
   });
 
   app.delete<{ Params: { id: string } }>('/books/:id', async (request, reply) => {
     const book = await prisma.book.findFirst({ where: { id: request.params.id, userId: userId(request) } });
     if (!book) return reply.code(404).send({ error: 'Livro não encontrado' });
     await prisma.book.delete({ where: { id: book.id } });
-    await fs.rm(path.join(env.storageDir, book.filePath), { force: true });
-    if (book.coverPath) await fs.rm(path.join(env.storageDir, book.coverPath), { force: true });
+    await storage.remove(book.filePath).catch((err) => request.log.warn({ err }, 'Falha ao apagar arquivo'));
+    if (book.coverPath) await storage.remove(book.coverPath).catch(() => {});
     return { ok: true };
   });
 }
