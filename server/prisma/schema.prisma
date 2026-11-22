@@ -1,0 +1,90 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String       @id @default(cuid())
+  email        String       @unique
+  name         String?
+  passwordHash String
+  createdAt    DateTime     @default(now())
+  books        Book[]
+  progress     Progress[]
+  bookmarks    Bookmark[]
+  highlights   Highlight[]
+  preferences  Preferences?
+}
+
+model Book {
+  id         String      @id @default(cuid())
+  userId     String
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title      String
+  author     String?
+  format     String // "EPUB" | "PDF"
+  filePath   String
+  fileSize   Int
+  coverPath  String?
+  createdAt  DateTime    @default(now())
+  progress   Progress[]
+  bookmarks  Bookmark[]
+  highlights Highlight[]
+
+  @@index([userId])
+}
+
+model Progress {
+  id        String   @id @default(cuid())
+  userId    String
+  bookId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  book      Book     @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  location  String // CFI (EPUB) ou número da página (PDF)
+  percent   Float    @default(0)
+  device    String?
+  updatedAt DateTime
+
+  @@unique([userId, bookId])
+}
+
+model Bookmark {
+  id        String   @id @default(cuid())
+  userId    String
+  bookId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  book      Book     @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  location  String
+  label     String
+  createdAt DateTime @default(now())
+
+  @@index([bookId, userId])
+}
+
+model Highlight {
+  id        String   @id @default(cuid())
+  userId    String
+  bookId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  book      Book     @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  location  String // cfiRange (EPUB) ou "página" (PDF)
+  text      String
+  color     String   @default("yellow")
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@index([bookId, userId])
+}
+
+model Preferences {
+  userId     String @id
+  user       User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  theme      String @default("light")
+  fontSize   Int    @default(100)
+  fontFamily String @default("serif")
+  lineHeight Float  @default(1.6)
+}

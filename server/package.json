@@ -1,0 +1,32 @@
+{
+  "name": "server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "prisma db push --skip-generate && tsx watch src/index.ts",
+    "build": "prisma generate && tsc -p tsconfig.json",
+    "start": "prisma db push --skip-generate && node dist/index.js",
+    "test": "vitest run",
+    "postinstall": "prisma generate"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.1.5",
+    "@fastify/jwt": "^10.2.8",
+    "@fastify/multipart": "^10.1.9",
+    "@fastify/static": "^10.1.12",
+    "@prisma/client": "^6.19.3",
+    "bcryptjs": "^3.0.2",
+    "dotenv": "^16.5.0",
+    "fast-xml-parser": "^5.12.1",
+    "fastify": "^5.12.8",
+    "jszip": "^3.10.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "prisma": "^6.19.3",
+    "tsx": "^4.19.4",
+    "typescript": "^5.9.3",
+    "vitest": "^5.1.1"
+  }
+}
