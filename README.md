@@ -38,6 +38,8 @@ npm run dev
 
 ## Produção
 
+Deploy gratuito (Render + Supabase): veja o [DEPLOY.md](DEPLOY.md).
+
 ```bash
 npm run build
 NODE_ENV=production npm start   # um único servidor em :3000 entrega a API e o site

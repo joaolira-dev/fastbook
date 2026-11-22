@@ -1,0 +1,40 @@
+# Blueprint do Render: app web gratuito (API + site no mesmo serviço).
+# Banco Postgres e arquivos ficam no Supabase (ver DEPLOY.md).
+services:
+  - type: web
+    name: fastbook
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm ci --include=dev && npm run build:render
+    startCommand: npm run start:render
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: STORAGE_DRIVER
+        value: s3
+      - key: S3_BUCKET
+        value: books
+      - key: MAX_UPLOAD_MB
+        value: "50"
+      - key: TMP_DIR
+        value: /tmp/fastbook
+      # Preencha no painel do Render (valores do Supabase):
+      - key: DATABASE_URL
+        sync: false
+      - key: S3_ENDPOINT
+        sync: false
+      - key: S3_REGION
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
