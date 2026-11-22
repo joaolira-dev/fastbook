@@ -16,10 +16,11 @@ function hash(s: string) {
   return Math.abs(h);
 }
 
-export function Cover({ book }: { book: Pick<Book, 'id' | 'title' | 'author' | 'hasCover'> }) {
-  const [failed, setFailed] = useState(false);
-  if (book.hasCover && !failed) {
-    return <img className="cover-img" src={coverUrl(book.id)} alt="" loading="lazy" onError={() => setFailed(true)} />;
+export function Cover({ book }: { book: Pick<Book, 'id' | 'title' | 'author' | 'hasCover' | 'coverKey'> }) {
+  const src = coverUrl(book.id, book.coverKey);
+  const [failed, setFailed] = useState<string | null>(null);
+  if (book.hasCover && failed !== src) {
+    return <img className="cover-img" src={src} alt="" loading="lazy" onError={() => setFailed(src)} />;
   }
   const [a, b] = PALETTES[hash(book.title) % PALETTES.length];
   return (

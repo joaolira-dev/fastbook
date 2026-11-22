@@ -3,8 +3,18 @@ import { useQuery } from '@tanstack/react-query';
 import { api, type Preferences } from './api';
 import { useAuth } from './auth';
 
-const DEFAULTS: Preferences = { theme: 'light', fontSize: 100, fontFamily: 'serif', lineHeight: 1.6 };
-const LS_KEY = 'estante:prefs';
+const DEFAULTS: Preferences = {
+  theme: 'light',
+  fontSize: 100,
+  fontFamily: 'serif',
+  lineHeight: 1.6,
+  layout: 'auto',
+  pageWidth: 'medium',
+  pageTurn: 'slide',
+  dailyGoal: 20,
+};
+const LS_KEY = 'fastbook:prefs';
+const OLD_LS_KEY = 'estante:prefs';
 
 export const THEME_COLORS: Record<Preferences['theme'], { bg: string; fg: string; meta: string }> = {
   light: { bg: '#fbfaf7', fg: '#1f1d1a', meta: '#f4f1ea' },
@@ -20,7 +30,7 @@ export const FONT_STACKS: Record<Preferences['fontFamily'], string> = {
 
 function readLocal(): Preferences {
   try {
-    const raw = localStorage.getItem(LS_KEY);
+    const raw = localStorage.getItem(LS_KEY) ?? localStorage.getItem(OLD_LS_KEY);
     if (raw) return { ...DEFAULTS, ...JSON.parse(raw) };
   } catch {
     /* sem storage */
@@ -48,7 +58,7 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
   });
 
   useEffect(() => {
-    if (remote.data && !dirty.current) setPrefs(remote.data);
+    if (remote.data && !dirty.current) setPrefs({ ...DEFAULTS, ...remote.data });
   }, [remote.data]);
 
   useEffect(() => {

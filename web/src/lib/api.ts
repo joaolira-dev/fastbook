@@ -6,15 +6,21 @@ export interface User {
   name: string | null;
 }
 
+export type ReadingStatus = 'want' | 'reading' | 'finished';
+
 export interface Book {
   id: string;
   title: string;
   author: string | null;
   format: Format;
   hasCover: boolean;
+  coverKey?: string | null;
   createdAt: string;
   percent: number;
   lastReadAt: string | null;
+  status: ReadingStatus;
+  finishedAt: string | null;
+  fileSize?: number;
 }
 
 export interface Progress {
@@ -42,14 +48,32 @@ export interface Highlight {
   createdAt: string;
 }
 
+export interface HighlightWithBook extends Highlight {
+  book: { id: string; title: string; author: string | null; format: Format };
+}
+
+export interface Stats {
+  days: { date: string; seconds: number }[];
+  books: { id: string; title: string; author: string | null; hasCover: boolean; seconds: number; finishedAt: string | null }[];
+}
+
 export type Theme = 'light' | 'dark' | 'sepia';
 export type FontFamily = 'serif' | 'sans' | 'mono';
+
+export type Layout = 'auto' | 'single' | 'double';
+export type PageWidth = 'narrow' | 'medium' | 'wide';
+export type PageTurn = 'slide' | 'fade' | 'none';
 
 export interface Preferences {
   theme: Theme;
   fontSize: number;
   fontFamily: FontFamily;
   lineHeight: number;
+  layout: Layout;
+  pageWidth: PageWidth;
+  pageTurn: PageTurn;
+  /** Meta diária, em minutos */
+  dailyGoal: number;
 }
 
 export class ApiError extends Error {
@@ -82,7 +106,20 @@ export async function api<T>(path: string, init: RequestInit & { json?: unknown 
 }
 
 export const fileUrl = (bookId: string) => `/api/books/${bookId}/file`;
-export const coverUrl = (bookId: string) => `/api/books/${bookId}/cover`;
+export const coverUrl = (bookId: string, key?: string | null) =>
+  `/api/books/${bookId}/cover${key ? `?v=${encodeURIComponent(key)}` : ''}`;
+
+/** Data local no formato YYYY-MM-DD (o "dia" de leitura é o do aparelho). */
+export function localDate(d = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+export const STATUS_LABEL: Record<ReadingStatus, string> = {
+  reading: 'Lendo',
+  want: 'Quero ler',
+  finished: 'Lido',
+};
 
 /** Upload com barra de progresso (fetch ainda não expõe progresso de envio). */
 export function uploadBook(form: FormData, onProgress: (fraction: number) => void): Promise<Book> {
