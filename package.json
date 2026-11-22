@@ -1,0 +1,22 @@
+{
+  "name": "leitor-livros",
+  "private": true,
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web -c blue,magenta \"npm run dev -w server\" \"npm run dev -w web\"",
+    "build": "npm run build -w web && npm run build -w server",
+    "start": "npm run start -w server",
+    "test": "npm test -w server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "overrides": {
+    "@xmldom/xmldom": "^0.8.15",
+    "effect": "^3.22.1",
+    "deepmerge-ts": "^8.0.0"
+  }
+}
