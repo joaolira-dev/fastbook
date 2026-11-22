@@ -1,5 +1,5 @@
 {
-  "name": "leitor-livros",
+  "name": "fastbook",
   "private": true,
   "workspaces": [
     "server",
