@@ -142,9 +142,83 @@ describe('livros e leitura', () => {
 
     expect((await app.inject({ url: '/api/preferences', headers: { cookie } })).json().theme).toBe('light');
     const prefs = await app.inject({ method: 'PUT', url: '/api/preferences', headers: { cookie }, payload: { theme: 'sepia', fontSize: 120, fontFamily: 'sans', lineHeight: 1.8 } });
-    expect(prefs.json()).toEqual({ theme: 'sepia', fontSize: 120, fontFamily: 'sans', lineHeight: 1.8 });
+    expect(prefs.json()).toEqual({
+      theme: 'sepia',
+      fontSize: 120,
+      fontFamily: 'sans',
+      lineHeight: 1.8,
+      layout: 'auto',
+      pageWidth: 'medium',
+      pageTurn: 'slide',
+      dailyGoal: 20,
+    });
 
     expect((await app.inject({ method: 'DELETE', url: base, headers: { cookie } })).statusCode).toBe(200);
     expect((await app.inject({ url: `${base}/highlights`, headers: { cookie } })).statusCode).toBe(404);
+  });
+});
+
+describe('estante, edição e estatísticas', () => {
+  it('deduz o status, marca como lido ao terminar e aceita status manual', async () => {
+    const { cookie } = await register('status@example.com');
+    const book = (await upload(cookie, Buffer.from('%PDF-1.4'), 's.pdf')).json();
+    expect(book.status).toBe('want');
+
+    const url = `/api/books/${book.id}/progress`;
+    await app.inject({ method: 'PUT', url, headers: { cookie }, payload: { location: '2', percent: 0.3 } });
+    expect((await app.inject({ url: `/api/books/${book.id}`, headers: { cookie } })).json().status).toBe('reading');
+
+    await app.inject({ method: 'PUT', url, headers: { cookie }, payload: { location: '9', percent: 1 } });
+    const done = (await app.inject({ url: `/api/books/${book.id}`, headers: { cookie } })).json();
+    expect(done.status).toBe('finished');
+    expect(done.finishedAt).toBeTruthy();
+
+    const want = await app.inject({ method: 'PATCH', url: `/api/books/${book.id}`, headers: { cookie }, payload: { status: 'want' } });
+    expect(want.json()).toMatchObject({ status: 'want', finishedAt: null });
+  });
+
+  it('edita título, autor e capa', async () => {
+    const { cookie } = await register('edit@example.com');
+    const book = (await upload(cookie, Buffer.from('%PDF-1.4'), 'e.pdf')).json();
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/books/${book.id}`,
+      headers: { cookie },
+      payload: { title: 'Novo título', author: 'Autora' },
+    });
+    expect(res.json()).toMatchObject({ title: 'Novo título', author: 'Autora' });
+    expect((await app.inject({ method: 'PATCH', url: `/api/books/${book.id}`, headers: { cookie }, payload: { title: '' } })).statusCode).toBe(400);
+
+    const form = new FormData();
+    form.append('cover', new Blob([Buffer.from([0x89, 0x50, 0x4e, 0x47])], { type: 'image/png' }), 'c.png');
+    const cover = await app.inject({ method: 'PUT', url: `/api/books/${book.id}/cover`, headers: { cookie }, payload: form });
+    expect(cover.statusCode).toBe(200);
+    expect(cover.json()).toMatchObject({ hasCover: true });
+    expect(cover.json().coverKey).toMatch(/\.png$/);
+
+    const other = await register('edit2@example.com');
+    expect((await app.inject({ method: 'PATCH', url: `/api/books/${book.id}`, headers: { cookie: other.cookie }, payload: { title: 'x' } })).statusCode).toBe(404);
+  });
+
+  it('soma o tempo de leitura por dia e lista todos os destaques', async () => {
+    const { cookie } = await register('stats@example.com');
+    const book = (await upload(cookie, Buffer.from('%PDF-1.4'), 't.pdf')).json();
+    const act = `/api/books/${book.id}/activity`;
+    await app.inject({ method: 'POST', url: act, headers: { cookie }, payload: { date: '2026-11-20', seconds: 60 } });
+    await app.inject({ method: 'POST', url: act, headers: { cookie }, payload: { date: '2026-11-20', seconds: 90 } });
+    await app.inject({ method: 'POST', url: act, headers: { cookie }, payload: { date: '2026-11-21', seconds: 30 } });
+    expect((await app.inject({ method: 'POST', url: act, headers: { cookie }, payload: { date: 'ontem', seconds: 30 } })).statusCode).toBe(400);
+
+    const stats = (await app.inject({ url: '/api/stats', headers: { cookie } })).json();
+    expect(stats.days).toEqual([
+      { date: '2026-11-20', seconds: 150 },
+      { date: '2026-11-21', seconds: 30 },
+    ]);
+    expect(stats.books[0]).toMatchObject({ id: book.id, seconds: 180 });
+
+    await app.inject({ method: 'POST', url: `/api/books/${book.id}/highlights`, headers: { cookie }, payload: { location: '1', text: 'trecho' } });
+    const all = (await app.inject({ url: '/api/highlights', headers: { cookie } })).json();
+    expect(all).toHaveLength(1);
+    expect(all[0].book).toMatchObject({ id: book.id, title: book.title });
   });
 });
