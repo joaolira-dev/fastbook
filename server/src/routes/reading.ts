@@ -20,7 +20,8 @@ async function ownBook(request: FastifyRequest<{ Params: { id: string } }>, repl
 
 const progressBody = z.object({
   location: z.string().min(1).max(2000),
-  percent: z.number().min(0).max(1),
+  // ausente enquanto o leitor ainda calcula o total: mantém o valor anterior
+  percent: z.number().min(0).max(1).optional(),
   updatedAt: z.coerce.date().optional(),
   device: z.string().max(100).optional(),
 });
@@ -81,7 +82,8 @@ export async function readingRoutes(app: FastifyInstance) {
     const p = await prisma.progress.findUnique({
       where: { userId_bookId: { userId: userId(request), bookId: request.params.id } },
     });
-    return { progress: p };
+    // `now` permite ao aparelho corrigir o próprio relógio antes de salvar
+    return { progress: p, now: new Date() };
   });
 
   app.put<BookParams>('/books/:id/progress', async (request, reply) => {
@@ -100,14 +102,15 @@ export async function readingRoutes(app: FastifyInstance) {
       return { progress: existing, applied: false };
     }
 
-    const data = { location: parsed.data.location, percent: parsed.data.percent, device: parsed.data.device, updatedAt };
+    const percent = parsed.data.percent ?? existing?.percent ?? 0;
+    const data = { location: parsed.data.location, percent, device: parsed.data.device, updatedAt };
     const progress = await prisma.progress.upsert({
       where: { userId_bookId: { userId: uid, bookId } },
       create: { userId: uid, bookId, ...data },
       update: data,
     });
     // Chegou ao fim: marca como lido (a menos que o usuário tenha escolhido outro status)
-    if (parsed.data.percent >= 0.99) {
+    if (percent >= 0.99) {
       await prisma.book.updateMany({
         where: { id: bookId, userId: uid, finishedAt: null, status: null },
         data: { finishedAt: updatedAt },

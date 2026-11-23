@@ -121,6 +121,12 @@ describe('livros e leitura', () => {
     const got = await app.inject({ url, headers: { cookie } });
     expect(got.json().progress).toMatchObject({ location: '10', percent: 0.5, device: 'pc' });
 
+    expect(Math.abs(new Date(got.json().now).getTime() - Date.now())).toBeLessThan(5000);
+
+    // sem percentual (leitor ainda calculando): muda a posição e mantém o percentual
+    const noPercent = await app.inject({ method: 'PUT', url, headers: { cookie }, payload: { location: '11' } });
+    expect(noPercent.json()).toMatchObject({ applied: true, progress: { location: '11', percent: 0.5 } });
+
     const list = await app.inject({ url: '/api/books', headers: { cookie } });
     expect(list.json()[0].percent).toBe(0.5);
   });
