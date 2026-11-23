@@ -5,7 +5,7 @@ import 'react-pdf/dist/Page/TextLayer.css';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import '../lib/pdf';
 import { fileUrl, type Highlight } from '../lib/api';
-import { animateTurn, foldText, SEARCH_LIMIT, tapZone, type ReaderHandle, type ReaderProps, type SearchHit, type TocItem } from './types';
+import { animateTurn, dragCommits, foldText, SEARCH_LIMIT, tapZone, type ReaderHandle, type ReaderProps, type SearchHit, type TocItem } from './types';
 
 type OutlineNode = Awaited<ReturnType<PDFDocumentProxy['getOutline']>>[number];
 
@@ -77,6 +77,7 @@ export const PdfReader = forwardRef<ReaderHandle, ReaderProps>(function PdfReade
   const pdfRef = useRef<PDFDocumentProxy | null>(null);
   const tocPages = useRef<number[]>([]);
   const turnDir = useRef<1 | -1 | 0>(0);
+  const moved = useRef(false);
 
   const go = useCallback(
     (p: number) => {
@@ -85,6 +86,7 @@ export const PdfReader = forwardRef<ReaderHandle, ReaderProps>(function PdfReade
         if (next !== cur) {
           wrapRef.current?.scrollTo({ top: 0 });
           turnDir.current = next > cur ? 1 : -1;
+          moved.current = true;
         }
         return next;
       });
@@ -145,6 +147,8 @@ export const PdfReader = forwardRef<ReaderHandle, ReaderProps>(function PdfReade
     }
     props.onLocation({
       location: loc,
+      moved: moved.current,
+      page: { current: page, total: numPages },
       remaining: { unit: 'pages', book: numPages - page + 1, chapter: nextChapter ? nextChapter - page : undefined },
       percent: numPages > 1 ? (page - 1) / (numPages - 1) : 1,
       label: `Página ${page} de ${numPages}`,
@@ -250,20 +254,91 @@ export const PdfReader = forwardRef<ReaderHandle, ReaderProps>(function PdfReade
     propsRef.current.onReady(toc);
   }
 
-  // Toque: laterais viram a página, centro mostra/esconde a barra. Swipe também vira.
-  const touch = useRef<{ x: number; y: number; t: number } | null>(null);
+  // Arrastar vira a página; toque no meio mostra/esconde as barras
+  const touch = useRef<{ x: number; y: number; t: number; selecting: boolean; mode: 'wait' | 'drag' | 'off'; last: { x: number; t: number }; v: number } | null>(null);
+  const lastTouch = useRef(0);
+  const mouseSelected = useRef(false);
+  const hasSelection = () => !document.getSelection()?.isCollapsed;
+
+  function shift(dx: number | null) {
+    const el = pageRef.current;
+    if (el) el.style.transform = dx ? `translateX(${dx}px)` : '';
+  }
+
+  function highlightUnder(target: HTMLElement): boolean {
+    const hlEl = target.closest('mark.pdf-hl') as HTMLElement | null;
+    const h = hlEl && highlights.find((x) => x.id === hlEl.dataset.hl);
+    if (!h) return false;
+    props.onHighlightClick(h, hlEl.getBoundingClientRect());
+    return true;
+  }
+
   function onClick(e: React.MouseEvent) {
     const target = e.target as HTMLElement;
-    const hlEl = target.closest('mark.pdf-hl') as HTMLElement | null;
-    if (hlEl) {
-      const h = highlights.find((x) => x.id === hlEl.dataset.hl);
-      if (h) props.onHighlightClick(h, hlEl.getBoundingClientRect());
+    if (Date.now() - lastTouch.current < 900) return; // clique emulado depois do toque
+    if (target.closest('a, button') || highlightUnder(target)) return;
+    if (e.detail > 1 || mouseSelected.current || hasSelection()) return;
+    // No PC o clique na página serve para selecionar: no máximo traz as barras de volta
+    if (!chromeVisible) props.onTap();
+  }
+
+  function onTouchStart(e: React.TouchEvent) {
+    lastTouch.current = Date.now();
+    if (e.touches.length > 1 || (e.target as HTMLElement).closest('button')) {
+      if (touch.current?.mode === 'drag') shift(null);
+      touch.current = null;
       return;
     }
+    const t = e.changedTouches[0];
+    const now = Date.now();
+    touch.current = { x: t.clientX, y: t.clientY, t: now, selecting: hasSelection(), mode: 'wait', last: { x: t.clientX, t: now }, v: 0 };
+  }
+
+  function onTouchMove(e: React.TouchEvent) {
+    lastTouch.current = Date.now();
+    const d = touch.current;
+    if (!d || d.mode === 'off') return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - d.x;
+    const dy = t.clientY - d.y;
+    if (d.mode === 'wait') {
+      if (zoom > 1 || hasSelection() || (Math.abs(dy) > 14 && Math.abs(dy) > Math.abs(dx))) {
+        d.mode = 'off';
+        return;
+      }
+      if (Math.abs(dx) < 10 || Math.abs(dx) < Math.abs(dy) * 1.2) return;
+      d.mode = 'drag';
+    }
+    const now = Date.now();
+    if (now - d.last.t >= 24) {
+      d.v = (t.clientX - d.last.x) / (now - d.last.t);
+      d.last = { x: t.clientX, t: now };
+    }
+    const atEnd = dx < 0 ? page >= numPages : page <= 1;
+    shift(atEnd ? dx * 0.25 : dx);
+  }
+
+  function onTouchEnd(e: React.TouchEvent) {
+    lastTouch.current = Date.now();
+    const d = touch.current;
+    touch.current = null;
+    if (!d) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - d.x;
+    if (d.mode === 'drag') {
+      shift(null);
+      const v = Date.now() - d.last.t > 120 ? 0 : d.v;
+      if (dragCommits(dx, box.w, v)) go(dx < 0 ? page + 1 : page - 1);
+      return;
+    }
+    if (d.mode === 'off' || Date.now() - d.t > 350 || Math.abs(dx) > 10 || Math.abs(t.clientY - d.y) > 10) return;
+    if (d.selecting || hasSelection()) return;
+    const target = e.target as HTMLElement;
     if (target.closest('a, button')) return;
-    if (!document.getSelection()?.isCollapsed) return;
+    e.preventDefault(); // o "clique" emulado cairia no painel que acabou de abrir
+    if (highlightUnder(target)) return;
     const rect = wrapRef.current!.getBoundingClientRect();
-    const zone = tapZone(e.clientX - rect.left, rect.width);
+    const zone = tapZone(t.clientX - rect.left, rect.width);
     if (zone === 'prev') go(page - 1);
     else if (zone === 'next') go(page + 1);
     else props.onTap();
@@ -276,20 +351,13 @@ export const PdfReader = forwardRef<ReaderHandle, ReaderProps>(function PdfReade
       ref={wrapRef}
       className={`pdf-wrap ${themeClass} ${zoom > 1 ? 'zoomed' : ''}`}
       onClick={onClick}
-      onTouchStart={(e) => {
-        const t = e.changedTouches[0];
-        touch.current = { x: t.clientX, y: t.clientY, t: Date.now() };
-      }}
-      onTouchEnd={(e) => {
-        const start = touch.current;
+      onMouseDown={() => (mouseSelected.current = hasSelection())}
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+      onTouchCancel={() => {
         touch.current = null;
-        if (!start || zoom > 1 || !document.getSelection()?.isCollapsed) return;
-        const t = e.changedTouches[0];
-        const dx = t.clientX - start.x;
-        if (Date.now() - start.t < 600 && Math.abs(dx) > 50 && Math.abs(t.clientY - start.y) < 60) {
-          e.preventDefault(); // evita o "click" depois do swipe
-          go(dx < 0 ? page + 1 : page - 1);
-        }
+        shift(null);
       }}
     >
       <Document

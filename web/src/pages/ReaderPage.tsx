@@ -43,7 +43,7 @@ export function ReaderPage() {
   const bookmarks = useQuery({ queryKey: ['bookmarks', id], queryFn: () => api<Bookmark[]>(`/books/${id}/bookmarks`) });
   const highlights = useQuery({ queryKey: ['highlights', id], queryFn: () => api<Highlight[]>(`/books/${id}/highlights`) });
   const sync = useProgressSync(id);
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const jumpTo = useRef(params.get('ir'));
   const poke = useReadingActivity(id);
   const [help, setHelp] = useState(false);
@@ -97,7 +97,7 @@ export function ReaderPage() {
     (l: ReaderLocation) => {
       lastLocation.current = l.location;
       setLoc(l);
-      sync.report(l.location, l.percent);
+      sync.report(l.location, l.percent, l.moved);
       if (l.remaining) trackPosition(l.remaining.unit, l.remaining.book);
       poke();
     },
@@ -140,7 +140,22 @@ export function ReaderPage() {
     return () => document.removeEventListener('fullscreenchange', on);
   }, []);
 
-  const onSelection = useCallback((s: SelectionInfo | null) => setSelection(s && s.text ? s : null), []);
+  // O link "Abrir no livro" vale uma vez: ao recarregar, volta para a posição de leitura
+  useEffect(() => {
+    if (loc && params.has('ir')) setParams({}, { replace: true });
+  }, [loc, params, setParams]);
+
+  // Tocar no menu de marcação pode desfazer a seleção antes do clique: segura o menu um instante
+  const holdSelection = useRef(0);
+  const onSelection = useCallback((s: SelectionInfo | null) => {
+    if (s?.text) {
+      setSelection(s);
+      return;
+    }
+    const left = holdSelection.current - Date.now();
+    if (left <= 0) setSelection(null);
+    else window.setTimeout(() => setSelection((cur) => (cur && Date.now() >= holdSelection.current ? null : cur)), left + 20);
+  }, []);
   const onHighlightClick = useCallback((h: Highlight) => setEditing(h), []);
   const onTap = useCallback(() => setChrome((c) => !c), []);
 
@@ -184,20 +199,26 @@ export function ReaderPage() {
     if (book.data) document.title = `${book.data.title} · fastbook`;
     return () => {
       document.title = 'fastbook';
-      qc.invalidateQueries({ queryKey: ['books'] });
     };
-  }, [book.data, qc]);
+  }, [book.data]);
 
   const bms = bookmarks.data ?? [];
   const hls = highlights.data ?? [];
   const currentBookmarks = loc ? bms.filter((b) => loc.contains(b.location)) : [];
   const isPdf = book.data?.format === 'PDF';
 
+  const percent = Math.round((loc?.percent ?? sync.initial?.percent ?? 0) * 100);
+  const pageText = loc?.page
+    ? `Página ${loc.page.current} de ${loc.page.total}`
+    : loc?.chapterPage
+      ? `Página ${loc.chapterPage.current} de ${loc.chapterPage.total} do capítulo`
+      : '';
+
   function toggleBookmark() {
     if (!loc) return;
     if (currentBookmarks.length) currentBookmarks.forEach((b) => delBookmark.mutate(b.id));
     else {
-      const pct = `${Math.round(loc.percent * 100)}%`;
+      const pct = loc.page ? `Página ${loc.page.current}` : `${percent}%`;
       addBookmark.mutate({ location: loc.location, label: isPdf ? loc.label : [loc.label, pct].filter(Boolean).join(' · ') });
     }
   }
@@ -230,7 +251,6 @@ export function ReaderPage() {
   }
 
   const ReaderComp = isPdf ? PdfReader : EpubReader;
-  const percent = Math.round((loc?.percent ?? 0) * 100);
   const rem = loc?.remaining;
   const speed = rem ? getSpeed(rem.unit) : 0;
   const timeLeft = rem
@@ -301,6 +321,14 @@ export function ReaderPage() {
           </Suspense>
         )}
         {error && <div className="reader-loading error">{error}</div>}
+        {sync.failed && !error && (
+          <div className="reader-failed">
+            <p>Não foi possível carregar sua posição de leitura. Verifique a internet.</p>
+            <button className="btn btn-primary" onClick={() => window.location.reload()}>
+              Tentar de novo
+            </button>
+          </div>
+        )}
         <button className="edge-nav edge-prev" onClick={() => readerRef.current?.prev()} aria-label="Página anterior" tabIndex={-1}>
           <Icon name="chevronLeft" size={28} />
         </button>
@@ -308,6 +336,12 @@ export function ReaderPage() {
           <Icon name="chevronRight" size={28} />
         </button>
       </main>
+
+      {!chrome && pageText && (
+        <div className="page-number" aria-hidden>
+          {loc?.page ? `${loc.page.current} / ${loc.page.total}` : pageText}
+        </div>
+      )}
 
       <footer className="reader-bar reader-bottom">
         <button className="icon-btn nav-btn" onClick={() => readerRef.current?.prev()} aria-label="Página anterior">
@@ -318,7 +352,11 @@ export function ReaderPage() {
             <span style={{ width: `${percent}%` }} />
           </div>
           <div className="reader-progress-info small">
-            <span>{isPdf ? loc?.label : `${percent}%`}</span>
+            <span>
+              {pageText && <strong>{pageText}</strong>}
+              {pageText && ' · '}
+              {percent}%
+            </span>
             {timeLeft && (
               <span className="muted">
                 {timeLeft.chapter && <span className="desktop-inline">{timeLeft.chapter} no capítulo · </span>}
@@ -356,7 +394,7 @@ export function ReaderPage() {
       )}
 
       {selection && !editing && (
-        <Popover anchor={selection.rect}>
+        <Popover anchor={selection.rect} onPress={() => (holdSelection.current = Date.now() + 900)}>
           <div className="hl-picker">
             {COLORS.map((c) => (
               <button

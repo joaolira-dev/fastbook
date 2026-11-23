@@ -8,9 +8,16 @@ export interface TocItem {
 
 export interface ReaderLocation {
   location: string;
-  percent: number;
+  /** null enquanto o total do livro ainda é calculado */
+  percent: number | null;
+  /** O leitor mudou de página; false ao reabrir ou redesenhar a mesma posição (não precisa salvar) */
+  moved: boolean;
   /** "Capítulo 3" ou "Página 12 de 200" */
   label: string;
+  /** Página do livro; no EPUB é de tamanho fixo, igual em qualquer aparelho e tamanho de letra */
+  page?: { current: number; total: number };
+  /** Tela atual dentro do capítulo (EPUB) */
+  chapterPage?: { current: number; total: number };
   /** A posição salva (de um marcador, por exemplo) está visível agora? */
   contains: (location: string) => boolean;
   /** Quanto falta, em caracteres (EPUB) ou páginas (PDF); ausente enquanto ainda é calculado */
@@ -62,12 +69,24 @@ export const HIGHLIGHT_FILL: Record<Highlight['color'], string> = {
   pink: '#f28bb8',
 };
 
-/** Decide o que fazer com um toque/clique na posição x da área de leitura. */
+/**
+ * Toque na posição x da área de leitura. Só uma faixa estreita nas bordas vira a página:
+ * tocar no texto (para marcar, por exemplo) nunca muda de página.
+ */
 export function tapZone(x: number, width: number): 'prev' | 'next' | 'center' {
-  if (x < width * 0.28) return 'prev';
-  if (x > width * 0.72) return 'next';
+  const edge = Math.min(64, width * 0.12);
+  if (x < edge) return 'prev';
+  if (x > width - edge) return 'next';
   return 'center';
 }
+
+/** Arrastar soltou: vira a página se andou o bastante ou se foi um gesto rápido. */
+export function dragCommits(dx: number, width: number, velocity: number): boolean {
+  if (Math.abs(dx) > width * 0.22) return true;
+  return Math.abs(dx) > 24 && Math.abs(velocity) > 0.35 && Math.sign(velocity) === Math.sign(dx);
+}
+
+export const reducedMotion = () => !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
 export const SEARCH_LIMIT = 300;
 
@@ -84,7 +103,7 @@ export function foldText(s: string): string {
 /** Anima a troca de página (o conteúdo novo entra pelo lado de onde se está indo). */
 export function animateTurn(el: HTMLElement | null, style: 'slide' | 'fade' | 'none', dir: 1 | -1) {
   if (!el || style === 'none' || !el.animate) return;
-  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+  if (reducedMotion()) return;
   const from = style === 'slide' ? { opacity: 0.15, transform: `translateX(${dir * 36}px)` } : { opacity: 0.1 };
   const to = style === 'slide' ? { opacity: 1, transform: 'translateX(0)' } : { opacity: 1 };
   el.animate([from, to], { duration: style === 'slide' ? 280 : 220, easing: 'cubic-bezier(.2,.7,.2,1)' });

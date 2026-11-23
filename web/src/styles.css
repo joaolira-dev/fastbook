@@ -542,7 +542,8 @@ a.cover:hover {
   bottom: calc(57px + env(safe-area-inset-bottom));
   transition: top 0.22s ease, bottom 0.22s ease;
 }
-.chrome-off .reader-stage {
+/* No EPUB a área não muda com as barras: o texto não pula ao mostrar/esconder */
+.chrome-off .reader-stage:has(.pdf-wrap) {
   top: env(safe-area-inset-top);
   bottom: env(safe-area-inset-bottom);
 }
@@ -1880,7 +1881,6 @@ a.cover:hover {
 .epub-area {
   position: relative;
   z-index: 1;
-  transition: max-width 0.25s ease;
 }
 .epub-gutter {
   position: absolute;
@@ -2012,4 +2012,57 @@ kbd {
 }
 .sheet-side .segmented button {
   padding: 7px 8px;
+}
+
+/* Número da página com as barras escondidas */
+.page-number {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(14px + env(safe-area-inset-bottom));
+  z-index: 4;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.reader {
+  overscroll-behavior: none;
+}
+.reader-progress-info strong {
+  font-weight: 600;
+}
+.reader-failed {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+}
+.popover-dock {
+  left: 50%;
+  bottom: calc(72px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  padding: 10px 14px;
+  border-radius: 18px;
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.popover-dock .hl-picker {
+  gap: 12px;
+}
+.popover-dock .swatch {
+  width: 40px;
+  height: 40px;
+}
+.popover-dock .btn {
+  min-height: 40px;
+}
+.pdf-page {
+  will-change: transform;
 }
