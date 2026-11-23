@@ -17,7 +17,8 @@ Aplicação web para ler livros EPUB e PDF. O progresso, os marcadores, os desta
 - **Sincronização**: salva a posição automaticamente; ao voltar para a aba, avisa "Você leu até 78% no celular. Ir para lá?"
 - **Tema** claro, sépia ou escuro; **fonte**, tamanho e espaçamento entre linhas (EPUB)
 - **Marcadores** e **destaques** em 4 cores, com nota
-- Pensado para o celular: toque nas laterais ou deslize para virar a página; toque no meio para esconder as barras
+- Pensado para o celular: arraste para o lado para virar a página, segure o texto para marcar, toque no meio para esconder as barras
+- **Número da página**, igual em qualquer aparelho e tamanho de letra
 
 ## Stack
 
