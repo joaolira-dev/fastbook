@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "prisma db push --skip-generate && tsx watch src/index.ts",
+    "dev": "prisma generate && prisma db push --skip-generate && tsx watch src/index.ts",
     "build": "prisma generate && tsc -p tsconfig.json",
     "start": "prisma db push --skip-generate && node dist/index.js",
     "test": "vitest run",
